@@ -44,7 +44,7 @@ class CentOSRDMAHandler(RDMAHandler):
         self.version_major, self.version_minor = v[0], v[1]
 
     def install_driver(self):   
-        logger.info("RDMA: [SHTIAL]: Skipping install_driver() function.")
+        logger.info("RDMA: [SHITAL]: Skipping install_driver() function.")
         return
         """
         Install the KVP daemon and the appropriate RDMA driver package for the
