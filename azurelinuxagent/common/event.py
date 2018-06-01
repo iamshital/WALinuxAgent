@@ -1,4 +1,4 @@
-# Copyright 2014 Microsoft Corporation
+# Copyright 2018 Microsoft Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Requires Python 2.4+ and Openssl 1.0+
+# Requires Python 2.6+ and Openssl 1.0+
 #
 
 import atexit
@@ -33,6 +33,7 @@ from azurelinuxagent.common.future import ustr
 from azurelinuxagent.common.protocol.restapi import TelemetryEventParam, \
     TelemetryEvent, \
     get_properties
+from azurelinuxagent.common.utils import textutil
 from azurelinuxagent.common.version import CURRENT_VERSION
 
 _EVENT_MSG = "Event: name={0}, op={1}, message={2}, duration={3}"
@@ -46,10 +47,12 @@ class WALAEventOperation:
     CustomData = "CustomData"
     Deploy = "Deploy"
     Disable = "Disable"
+    Downgrade = "Downgrade"
     Download = "Download"
     Enable = "Enable"
     ExtensionProcessing = "ExtensionProcessing"
     Firewall = "Firewall"
+    GetArtifactExtended = "GetArtifactExtended"
     HealthCheck = "HealthCheck"
     HeartBeat = "HeartBeat"
     HostPlugin = "HostPlugin"
@@ -60,8 +63,9 @@ class WALAEventOperation:
     Partition = "Partition"
     ProcessGoalState = "ProcessGoalState"
     Provision = "Provision"
-    GuestState = "GuestState"
+    ProvisionGuestAgent = "ProvisionGuestAgent"
     ReportStatus = "ReportStatus"
+    ReportStatusExtended = "ReportStatusExtended"
     Restart = "Restart"
     SkipUpdate = "SkipUpdate"
     UnhandledError = "UnhandledError"
@@ -70,6 +74,14 @@ class WALAEventOperation:
     Upgrade = "Upgrade"
     Update = "Update"
 
+
+SHOULD_ENCODE_MESSAGE_LEN = 80
+SHOULD_ENCODE_MESSAGE_OP = [
+    WALAEventOperation.Disable,
+    WALAEventOperation.Enable,
+    WALAEventOperation.Install,
+    WALAEventOperation.UnInstall,
+]
 
 class EventStatus(object):
     EVENT_STATUS_FILE = "event_status.json"
@@ -128,9 +140,45 @@ __event_status_operations__ = [
     ]
 
 
+def _encode_message(op, message):
+    """
+    Gzip and base64 encode a message based on the operation.
+
+    The intent of this message is to make the logs human readable and include the
+    stdout/stderr from extension operations.  Extension operations tend to generate
+    a lot of noise, which makes it difficult to parse the line-oriented waagent.log.
+    The compromise is to encode the stdout/stderr so we preserve the data and do
+    not destroy the line oriented nature.
+
+    The data can be recovered using the following command:
+
+      $ echo '<encoded data>' | base64 -d | pigz -zd
+
+    You may need to install the pigz command.
+
+    :param op: Operation, e.g. Enable or Install
+    :param message: Message to encode
+    :return: gzip'ed and base64 encoded message, or the original message
+    """
+
+    if len(message) == 0:
+        return message
+
+    if op not in SHOULD_ENCODE_MESSAGE_OP:
+        return message
+
+    try:
+        return textutil.compress(message)
+    except Exception:
+        # If the message could not be encoded a dummy message ('<>') is returned.
+        # The original message was still sent via telemetry, so all is not lost.
+        return "<>"
+
+
 def _log_event(name, op, message, duration, is_success=True):
     global _EVENT_MSG
 
+    message = _encode_message(op, message)
     if not is_success:
         logger.error(_EVENT_MSG, name, op, message, duration)
     else:
@@ -206,7 +254,11 @@ class EventLogger(object):
         if not is_success or log_event:
             _log_event(name, op, message, duration, is_success=is_success)
 
-        event = TelemetryEvent(1, "69B669B9-4AF8-4C50-BDC4-6006FA76E975")
+        self._add_event(duration, evt_type, is_internal, is_success, message, name, op, version, eventId=1)
+        self._add_event(duration, evt_type, is_internal, is_success, message, name, op, version, eventId=6)
+
+    def _add_event(self, duration, evt_type, is_internal, is_success, message, name, op, version, eventId):
+        event = TelemetryEvent(eventId, "69B669B9-4AF8-4C50-BDC4-6006FA76E975")
         event.parameters.append(TelemetryEventParam('Name', name))
         event.parameters.append(TelemetryEventParam('Version', str(version)))
         event.parameters.append(TelemetryEventParam('IsInternal', is_internal))
@@ -254,7 +306,11 @@ __event_logger__ = EventLogger()
 
 
 def elapsed_milliseconds(utc_start):
-    d = datetime.utcnow() - utc_start
+    now = datetime.utcnow()
+    if now < utc_start:
+        return 0
+
+    d = now - utc_start
     return int(((d.days * 24 * 60 * 60 + d.seconds) * 1000) + \
                     (d.microseconds / 1000.0))
 

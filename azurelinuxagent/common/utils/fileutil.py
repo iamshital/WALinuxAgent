@@ -1,6 +1,6 @@
 # Microsoft Azure Linux Agent
 #
-# Copyright 2014 Microsoft Corporation
+# Copyright 2018 Microsoft Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Requires Python 2.4+ and Openssl 1.0+
+# Requires Python 2.6+ and Openssl 1.0+
 #
 
 """
@@ -43,13 +43,6 @@ KNOWN_IOERRORS = [
     errno.ELOOP,        # Too many symbolic links encountered
     121                 # Remote I/O error (errno.EREMOTEIO -- not present in all Python 2.7+)
 ]
-
-
-def copy_file(from_path, to_path=None, to_dir=None):
-    if to_path is None:
-        to_path = os.path.join(to_dir, os.path.basename(from_path))
-    shutil.copyfile(from_path, to_path)
-    return to_path
 
 
 def read_file(filepath, asbin=False, remove_bom=False, encoding='utf-8'):
@@ -140,7 +133,7 @@ def rm_files(*args):
 
 def rm_dirs(*args):
     """
-    Remove the contents of each directry
+    Remove the contents of each directory
     """
     for p in args:
         if not os.path.isdir(p):
@@ -193,9 +186,10 @@ def findstr_in_file(file_path, line_str):
     (Trailing whitespace is ignored.)
     """
     try:
-        for line in (open(file_path, 'r')).readlines():
-            if line_str == line.rstrip():
-                return True
+        with open(file_path, 'r') as fh:
+            for line in fh.readlines():
+                if line_str == line.rstrip():
+                    return True
     except Exception:
         # swallow exception
         pass
@@ -207,11 +201,12 @@ def findre_in_file(file_path, line_re):
     Return match object if found in file.
     """
     try:
-        pattern = re.compile(line_re)
-        for line in (open(file_path, 'r')).readlines():
-            match = re.search(pattern, line)
-            if match:
-                return match
+        with open(file_path, 'r') as fh:
+            pattern = re.compile(line_re)
+            for line in fh.readlines():
+                match = re.search(pattern, line)
+                if match:
+                    return match
     except:
         pass
 

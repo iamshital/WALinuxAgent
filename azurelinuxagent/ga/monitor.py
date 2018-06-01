@@ -1,4 +1,4 @@
-# Copyright 2014 Microsoft Corporation
+# Copyright 2018 Microsoft Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Requires Python 2.4+ and Openssl 1.0+
+# Requires Python 2.6+ and Openssl 1.0+
 #
 
 import datetime
@@ -28,10 +28,11 @@ import azurelinuxagent.common.utils.fileutil as fileutil
 import azurelinuxagent.common.logger as logger
 
 from azurelinuxagent.common.event import add_event, WALAEventOperation
-from azurelinuxagent.common.exception import EventError, ProtocolError, OSUtilError
+from azurelinuxagent.common.exception import EventError, ProtocolError, OSUtilError, HttpError
 from azurelinuxagent.common.future import ustr
 from azurelinuxagent.common.osutil import get_osutil
 from azurelinuxagent.common.protocol import get_protocol_util
+from azurelinuxagent.common.protocol.imds import get_imds_client
 from azurelinuxagent.common.protocol.restapi import TelemetryEventParam, \
                                                     TelemetryEventList, \
                                                     TelemetryEvent, \
@@ -93,14 +94,21 @@ class MonitorHandler(object):
     def __init__(self):
         self.osutil = get_osutil()
         self.protocol_util = get_protocol_util()
+        self.imds_client = get_imds_client()
         self.sysinfo = []
+        self.event_thread = None
 
     def run(self):
         self.init_sysinfo()
+        self.start()
 
-        event_thread = threading.Thread(target=self.daemon)
-        event_thread.setDaemon(True)
-        event_thread.start()
+    def is_alive(self):
+        return self.event_thread.is_alive()
+
+    def start(self):
+        self.event_thread = threading.Thread(target=self.daemon)
+        self.event_thread.setDaemon(True)
+        self.event_thread.start()
 
     def init_sysinfo(self):
         osversion = "{0}:{1}-{2}-{3}:{4}".format(platform.system(),
@@ -135,6 +143,21 @@ class MonitorHandler(object):
                                                     vminfo.containerId))
         except ProtocolError as e:
             logger.warn("Failed to get system info: {0}", e)
+
+        try:
+            vminfo = self.imds_client.get_compute()
+            self.sysinfo.append(TelemetryEventParam('Location',
+                                                    vminfo.location))
+            self.sysinfo.append(TelemetryEventParam('SubscriptionId',
+                                                    vminfo.subscriptionId))
+            self.sysinfo.append(TelemetryEventParam('ResourceGroupName',
+                                                    vminfo.resourceGroupName))
+            self.sysinfo.append(TelemetryEventParam('VMId',
+                                                    vminfo.vmId))
+            self.sysinfo.append(TelemetryEventParam('ImageOrigin',
+                                                    vminfo.image_origin))
+        except (HttpError, ValueError) as e:
+            logger.warn("failed to get IMDS info: {0}", e)
 
     def collect_event(self, evt_file_name):
         try:

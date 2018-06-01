@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Requires Python 2.4+ and Openssl 1.0+
+# Requires Python 2.6+ and Openssl 1.0+
 #
 
 import azurelinuxagent.common.logger as logger
@@ -30,7 +30,8 @@ def get_rdma_handler(
 ):
     """Return the handler object for RDMA driver handling"""
     if (
-            distro_full_name == 'SUSE Linux Enterprise Server' and
+            (distro_full_name == 'SUSE Linux Enterprise Server' or
+             distro_full_name == 'SLES') and
             int(distro_version) > 11
     ):
         return SUSERDMAHandler()

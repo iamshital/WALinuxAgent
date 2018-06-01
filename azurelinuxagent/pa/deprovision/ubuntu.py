@@ -1,6 +1,6 @@
 # Microsoft Azure Linux Agent
 #
-# Copyright 2014 Microsoft Corporation
+# Copyright 2018 Microsoft Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Requires Python 2.4+ and Openssl 1.0+
+# Requires Python 2.6+ and Openssl 1.0+
 #
 
 import os
@@ -40,3 +40,13 @@ class UbuntuDeprovisionHandler(DeprovisionHandler):
             files_to_del = ["/etc/resolvconf/resolv.conf.d/tail",
                             "/etc/resolvconf/resolv.conf.d/original"]
             actions.append(DeprovisionAction(fileutil.rm_files, files_to_del))
+
+
+class Ubuntu1804DeprovisionHandler(UbuntuDeprovisionHandler):
+    def __init__(self):
+        super(Ubuntu1804DeprovisionHandler, self).__init__()
+
+    def del_resolv(self, warnings, actions):
+        # no changes will be made to /etc/resolv.conf
+        warnings.append("WARNING! /etc/resolv.conf will NOT be removed, this is a behavior change to earlier "
+                        "versions of Ubuntu.")

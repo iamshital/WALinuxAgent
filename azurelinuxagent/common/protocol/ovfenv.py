@@ -1,6 +1,6 @@
 # Microsoft Azure Linux Agent
 #
-# Copyright 2014 Microsoft Corporation
+# Copyright 2018 Microsoft Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Requires Python 2.4+ and Openssl 1.0+
+# Requires Python 2.6+ and Openssl 1.0+
 #
 """
 Copy and parse ovf-env.xml from provisioning ISO and local cache
@@ -52,6 +52,7 @@ class OvfEnv(object):
         self.disable_ssh_password_auth = True
         self.ssh_pubkeys = []
         self.ssh_keypairs = []
+        self.provision_guest_agent = None
         self.parse(xml_text)
 
     def parse(self, xml_text):
@@ -111,3 +112,11 @@ class OvfEnv(object):
             fingerprint = findtext(keypair, "Fingerprint", namespace=wans)
             self.ssh_keypairs.append((path, fingerprint))
 
+        platform_settings_section = find(environment, "PlatformSettingsSection", namespace=wans)
+        _validate_ovf(platform_settings_section, "PlatformSettingsSection not found")
+
+        platform_settings = find(platform_settings_section, "PlatformSettings", namespace=wans)
+        _validate_ovf(platform_settings, "PlatformSettings not found")
+
+        self.provision_guest_agent = findtext(platform_settings, "ProvisionGuestAgent", namespace=wans)
+        _validate_ovf(self.provision_guest_agent, "ProvisionGuestAgent not found")

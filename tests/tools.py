@@ -1,4 +1,4 @@
-# Copyright 2014 Microsoft Corporation
+# Copyright 2018 Microsoft Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Requires Python 2.4+ and Openssl 1.0+
+# Requires Python 2.6+ and Openssl 1.0+
 #
 
 """
@@ -28,7 +28,7 @@ from functools import wraps
 
 import time
 
-import azurelinuxagent.common.event as event
+import azurelinuxagent.common.event
 import azurelinuxagent.common.conf as conf
 import azurelinuxagent.common.logger as logger
 from azurelinuxagent.common.utils import fileutil
@@ -37,9 +37,9 @@ from azurelinuxagent.common.version import PY_VERSION_MAJOR
 
 # Import mock module for Python2 and Python3
 try:
-    from unittest.mock import Mock, patch, MagicMock, DEFAULT, ANY, call
+    from unittest.mock import Mock, patch, MagicMock, ANY, DEFAULT, call
 except ImportError:
-    from mock import Mock, patch, MagicMock, DEFAULT, ANY, call
+    from mock import Mock, patch, MagicMock, ANY, DEFAULT, call
 
 test_dir = os.path.dirname(os.path.abspath(__file__))
 data_dir = os.path.join(test_dir, "data")
@@ -54,7 +54,18 @@ if debug:
                                logger.LogLevel.VERBOSE)
 
 
+def _do_nothing():
+    pass
+
+
 class AgentTestCase(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if not hasattr(cls, "assertRegex"):
+            cls.assertRegex = cls.assertRegexpMatches if hasattr(cls, "assertRegexpMatches") else _do_nothing
+        if not hasattr(cls, "assertNotRegex"):
+            cls.assertNotRegex = cls.assertNotRegexpMatches if hasattr(cls, "assertNotRegexpMatches") else _do_nothing
+
     def setUp(self):
         prefix = "{0}_".format(self.__class__.__name__)
 
@@ -69,14 +80,15 @@ class AgentTestCase(unittest.TestCase):
 
         conf.get_agent_pid_file_path = Mock(return_value=os.path.join(self.tmp_dir, "waagent.pid"))
 
-        event.init_event_status(self.tmp_dir)
-        event.init_event_logger(self.tmp_dir)
+        azurelinuxagent.common.event.init_event_status(self.tmp_dir)
+        azurelinuxagent.common.event.init_event_logger(self.tmp_dir)
 
     def tearDown(self):
         if not debug and self.tmp_dir is not None:
             shutil.rmtree(self.tmp_dir)
 
-    def _create_files(self, tmp_dir, prefix, suffix, count, with_sleep=0):
+    @staticmethod
+    def _create_files(tmp_dir, prefix, suffix, count, with_sleep=0):
         for i in range(count):
             f = os.path.join(tmp_dir, '.'.join((prefix, str(i), suffix)))
             fileutil.write_file(f, "faux content")

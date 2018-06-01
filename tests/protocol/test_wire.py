@@ -1,4 +1,4 @@
-# Copyright 2014 Microsoft Corporation
+# Copyright 2018 Microsoft Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Requires Python 2.4+ and Openssl 1.0+
+# Requires Python 2.6+ and Openssl 1.0+
 #
 
 import glob
@@ -43,9 +43,8 @@ class TestWireProtocol(AgentTestCase):
             protocol.get_vminfo()
             protocol.get_certs()
             ext_handlers, etag = protocol.get_ext_handlers()
-            self.assertEqual("1", etag)
             for ext_handler in ext_handlers.extHandlers:
-                protocol.get_ext_handler_pkgs(ext_handler, etag)
+                protocol.get_ext_handler_pkgs(ext_handler)
 
             crt1 = os.path.join(self.tmp_dir,
                                 '33B0ABCE4673538650971C10F7D7397E71561F35.crt')
@@ -93,7 +92,6 @@ class TestWireProtocol(AgentTestCase):
         #    fetched often; however, the dependent documents, such as the
         #    HostingEnvironmentConfig, will be retrieved the expected number
         self.assertEqual(2, test_data.call_counts["hostingenvuri"])
-
 
     def test_call_storage_kwargs(self,
                                  mock_cryptutil,
@@ -155,7 +153,7 @@ class TestWireProtocol(AgentTestCase):
             host_plugin = wire_protocol_client.get_host_plugin()
             self.assertEqual(goal_state.container_id, host_plugin.container_id)
             self.assertEqual(goal_state.role_config_name, host_plugin.role_config_name)
-            patch_get_goal_state.assert_called_once()
+            self.assertEqual(1, patch_get_goal_state.call_count)
 
     def test_download_ext_handler_pkg_fallback(self, *args):
         ext_uri = 'extension_uri'
@@ -182,6 +180,9 @@ class TestWireProtocol(AgentTestCase):
                                      host_uri)
 
     def test_upload_status_blob_default(self, *args):
+        """
+        Default status blob method is HostPlugin.
+        """
         vmstatus = VMStatus(message="Ready", status="Ready")
         wire_protocol_client = WireProtocol(wireserver_url).client
         wire_protocol_client.ext_conf = ExtensionsConfig(None)
@@ -195,9 +196,12 @@ class TestWireProtocol(AgentTestCase):
                     HostPluginProtocol.set_default_channel(False)
                     wire_protocol_client.upload_status_blob()
 
-                    patch_default_upload.assert_called_once_with(testurl)
-                    patch_get_goal_state.assert_not_called()
-                    patch_host_ga_plugin_upload.assert_not_called()
+                    # do not call the direct method unless host plugin fails
+                    patch_default_upload.assert_not_called()
+                    # host plugin always fetches a goal state
+                    patch_get_goal_state.assert_called_once_with()
+                    # host plugin uploads the status blob
+                    patch_host_ga_plugin_upload.assert_called_once_with(ANY, testurl, 'BlockBlob')
 
     def test_upload_status_blob_host_ga_plugin(self, *args):
         vmstatus = VMStatus(message="Ready", status="Ready")
@@ -219,11 +223,10 @@ class TestWireProtocol(AgentTestCase):
                     HostPluginProtocol.set_default_channel(False)
                     wire_protocol_client.get_goal_state = Mock(return_value=goal_state)
                     wire_protocol_client.upload_status_blob()
-                    patch_default_upload.assert_called_once_with(testurl)
-                    wire_protocol_client.get_goal_state.assert_called_once()
+                    patch_default_upload.assert_not_called()
+                    self.assertEqual(1, wire_protocol_client.get_goal_state.call_count)
                     patch_http.assert_called_once_with(testurl, wire_protocol_client.status_blob)
-                    self.assertTrue(HostPluginProtocol.is_default_channel())
-                    HostPluginProtocol.set_default_channel(False)
+                    self.assertFalse(HostPluginProtocol.is_default_channel())
 
     def test_upload_status_blob_unknown_type_assumes_block(self, *args):
         vmstatus = VMStatus(message="Ready", status="Ready")
@@ -241,7 +244,7 @@ class TestWireProtocol(AgentTestCase):
 
                     patch_prepare.assert_called_once_with("BlockBlob")
                     patch_default_upload.assert_called_once_with(testurl)
-                    patch_get_goal_state.assert_not_called()
+                    patch_get_goal_state.assert_called_once_with()
 
     def test_upload_status_blob_reports_prepare_error(self, *args):
         vmstatus = VMStatus(message="Ready", status="Ready")
@@ -257,8 +260,8 @@ class TestWireProtocol(AgentTestCase):
             with patch.object(WireClient, "report_status_event") as mock_event:
                 wire_protocol_client.upload_status_blob()
 
-                mock_prepare.assert_called_once()
-                mock_event.assert_called_once()
+                self.assertEqual(1, mock_prepare.call_count)
+                self.assertEqual(1, mock_event.call_count)
 
     def test_get_in_vm_artifacts_profile_blob_not_available(self, *args):
         wire_protocol_client = WireProtocol(wireserver_url).client
@@ -344,7 +347,7 @@ class TestWireProtocol(AgentTestCase):
         wire_protocol_client.ext_conf.artifacts_profile_blob = testurl
         goal_state = GoalState(WireProtocolData(DATA_FILE).goal_state)
         wire_protocol_client.get_goal_state = Mock(return_value=goal_state)
-        wire_protocol_client.fetch = Mock(side_effect=[None, '{"onHold": "true"}'.encode('utf-8')])
+        wire_protocol_client.fetch = Mock(side_effect=[None, '{"onHold": "true"}'])
         with patch.object(HostPluginProtocol,
                           "get_artifact_request",
                           return_value=['dummy_url', {}]) as artifact_request:

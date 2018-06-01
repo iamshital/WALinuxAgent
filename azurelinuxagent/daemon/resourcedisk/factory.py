@@ -1,4 +1,4 @@
-# Copyright 2014 Microsoft Corporation
+# Copyright 2018 Microsoft Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,17 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Requires Python 2.4+ and Openssl 1.0+
+# Requires Python 2.6+ and Openssl 1.0+
 #
 
-import azurelinuxagent.common.logger as logger
-from azurelinuxagent.common.utils.textutil import Version
 from azurelinuxagent.common.version import DISTRO_NAME, \
                                            DISTRO_VERSION, \
                                            DISTRO_FULL_NAME
 from .default import ResourceDiskHandler
 from .freebsd import FreeBSDResourceDiskHandler
 from .openbsd import OpenBSDResourceDiskHandler
+
+from distutils.version import LooseVersion as Version
+
 
 def get_resourcedisk_handler(distro_name=DISTRO_NAME, 
                              distro_version=DISTRO_VERSION,

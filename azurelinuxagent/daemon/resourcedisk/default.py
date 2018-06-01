@@ -1,4 +1,4 @@
-# Copyright 2014 Microsoft Corporation
+# Copyright 2018 Microsoft Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Requires Python 2.4+ and Openssl 1.0+
+# Requires Python 2.6+ and Openssl 1.0+
 #
 
 import os
@@ -305,13 +305,13 @@ class ResourceDiskHandler(object):
                 # Probable errors:
                 #  - OSError: Seen on Cygwin, libc notimpl?
                 #  - AttributeError: What if someone runs this under...
-                with open(filename, 'w') as f:
-                    try:
+                try:
+                    with open(filename, 'w') as f:
                         os.posix_fallocate(f.fileno(), 0, nbytes)
                         return 0
-                    except:
-                        # Not confident with this thing, just keep trying...
-                        pass
+                except:
+                    # Not confident with this thing, just keep trying...
+                    pass
 
             # fallocate command
             ret = shellutil.run(

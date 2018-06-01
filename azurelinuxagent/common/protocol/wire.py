@@ -1,6 +1,6 @@
 # Microsoft Azure Linux Agent
 #
-# Copyright 2014 Microsoft Corporation
+# Copyright 2018 Microsoft Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Requires Python 2.4+ and Openssl 1.0+
+# Requires Python 2.6+ and Openssl 1.0+
+
+from datetime import datetime
 
 import json
 import os
@@ -28,13 +30,15 @@ import azurelinuxagent.common.utils.fileutil as fileutil
 import azurelinuxagent.common.utils.textutil as textutil
 
 from azurelinuxagent.common.exception import ProtocolNotFoundError, \
-                                            ResourceGoneError, RestartError
+                                            ResourceGoneError
 from azurelinuxagent.common.future import httpclient, bytebuffer
 from azurelinuxagent.common.protocol.hostplugin import HostPluginProtocol
 from azurelinuxagent.common.protocol.restapi import *
+from azurelinuxagent.common.utils.archive import StateFlusher
 from azurelinuxagent.common.utils.cryptutil import CryptUtil
 from azurelinuxagent.common.utils.textutil import parse_doc, findall, find, \
     findtext, getattrib, gettext, remove_bom, get_bytes_from_pem, parse_json
+from azurelinuxagent.common.version import AGENT_NAME
 
 VERSION_INFO_URI = "http://{0}/?comp=versions"
 GOAL_STATE_URI = "http://{0}/machine/?comp=goalstate"
@@ -145,9 +149,10 @@ class WireProtocol(Protocol):
         # In wire protocol, incarnation is equivalent to ETag
         return ext_conf.ext_handlers, goal_state.incarnation
 
-    def get_ext_handler_pkgs(self, ext_handler, etag):
+    def get_ext_handler_pkgs(self, ext_handler):
         logger.verbose("Get extension handler package")
-        man = self.client.get_ext_manifest(ext_handler, etag)
+        goal_state = self.client.get_goal_state()
+        man = self.client.get_ext_manifest(ext_handler, goal_state)
         return man.pkg_list
 
     def get_artifacts_profile(self):
@@ -529,6 +534,7 @@ class WireClient(object):
         self.ext_conf = None
         self.host_plugin = None
         self.status_blob = StatusBlob(self)
+        self.goal_state_flusher = StateFlusher(conf.get_lib_dir())
 
     def call_wireserver(self, http_req, *args, **kwargs):
         try:
@@ -595,6 +601,12 @@ class WireClient(object):
         random.shuffle(version_uris_shuffled)
 
         for version in version_uris_shuffled:
+            # GA expects a location and failoverLocation in ExtensionsConfig, but
+            # this is not always the case. See #1147.
+            if version.uri is None:
+                logger.verbose('The specified manifest URL is empty, ignored.')
+                continue
+
             response = None
             if not HostPluginProtocol.is_default_channel():
                 response = self.fetch(version.uri)
@@ -716,6 +728,8 @@ class WireClient(object):
                             # Goalstate is not updated.
                             return
 
+                self.goal_state_flusher.flush(datetime.utcnow())
+
                 self.goal_state = goal_state
                 file_name = GOAL_STATE_FILE_NAME.format(goal_state.incarnation)
                 goal_state_file = os.path.join(conf.get_lib_dir(), file_name)
@@ -799,35 +813,25 @@ class WireClient(object):
                 self.ext_conf = ExtensionsConfig(xml_text)
         return self.ext_conf
 
-    def get_ext_manifest(self, ext_handler, incarnation):
-
+    def get_ext_manifest(self, ext_handler, goal_state):
         for update_goal_state in [False, True]:
             try:
                 if update_goal_state:
                     self.update_goal_state(forced=True)
-                    incarnation = self.get_goal_state().incarnation
+                    goal_state = self.get_goal_state()
 
                 local_file = MANIFEST_FILE_NAME.format(
                                 ext_handler.name,
-                                incarnation)
+                                goal_state.incarnation)
                 local_file = os.path.join(conf.get_lib_dir(), local_file)
-
-                xml_text = None
-                if not update_goal_state:
-                    try:
-                        xml_text = self.fetch_cache(local_file)
-                    except ProtocolError:
-                        pass
-
-                if xml_text is None:
-                    xml_text = self.fetch_manifest(ext_handler.versionUris)
-                    self.save_cache(local_file, xml_text)
+                xml_text = self.fetch_manifest(ext_handler.versionUris)
+                self.save_cache(local_file, xml_text)
                 return ExtensionManifest(xml_text)
 
             except ResourceGoneError:
                 continue
 
-        raise RestartError("Failed to retrieve extension manifest")
+        raise ProtocolError("Failed to retrieve extension manifest")
 
     def filter_package_list(self, family, ga_manifest, goal_state):
         complete_list = ga_manifest.pkg_list
@@ -871,6 +875,10 @@ class WireClient(object):
                     self.update_goal_state(forced=True)
                     goal_state = self.get_goal_state()
 
+                self._remove_stale_agent_manifest(
+                    vmagent_manifest.family,
+                    goal_state.incarnation)
+
                 local_file = MANIFEST_FILE_NAME.format(
                                 vmagent_manifest.family,
                                 goal_state.incarnation)
@@ -884,6 +892,25 @@ class WireClient(object):
                 continue
 
         raise ProtocolError("Failed to retrieve GAFamily manifest")
+
+    def _remove_stale_agent_manifest(self, family, incarnation):
+        """
+        The incarnation number can reset at any time, which means there
+        could be a stale agentsManifest on disk.  Stale files are cleaned
+        on demand as new goal states arrive from WireServer. If the stale
+        file is not removed agent upgrade may be delayed.
+
+        :param family: GA family, e.g. Prod or Test
+        :param incarnation: incarnation of the current goal state
+        """
+        fn = AGENTS_MANIFEST_FILE_NAME.format(
+            family,
+            incarnation)
+
+        agent_manifest = os.path.join(conf.get_lib_dir(), fn)
+
+        if os.path.exists(agent_manifest):
+            os.unlink(agent_manifest)
 
     def check_wire_protocol_version(self):
         uri = VERSION_INFO_URI.format(self.endpoint)
@@ -926,25 +953,44 @@ class WireClient(object):
                             "Exception creating status blob: {0}", ustr(e))
                         return
 
-                    if not HostPluginProtocol.is_default_channel():
-                        try:
-                            if self.status_blob.upload(blob_uri):
-                                return
-                        except HttpError as e:
-                            pass
+                    # Swap the order of use for the HostPlugin vs. the "direct" route.
+                    # Prefer the use of HostPlugin. If HostPlugin fails fall back to the
+                    # direct route.
+                    #
+                    # The code previously preferred the "direct" route always, and only fell back
+                    # to the HostPlugin *if* there was an error.  We would like to move to
+                    # the HostPlugin for all traffic, but this is a big change.  We would like
+                    # to see how this behaves at scale, and have a fallback should things go
+                    # wrong.  This is why we try HostPlugin then direct.
+                    try:
+                        host = self.get_host_plugin()
+                        host.put_vm_status(self.status_blob,
+                                           ext_conf.status_upload_blob,
+                                           ext_conf.status_upload_blob_type)
+                        return
+                    except HttpError:
+                        pass
+                    except Exception as e:
+                        if not isinstance(e, ResourceGoneError):
+                            self.report_status_event("Exception uploading status blob (HostPlugin): {0}", ustr(e))
 
-                    host = self.get_host_plugin()
-                    host.put_vm_status(self.status_blob,
-                                    ext_conf.status_upload_blob,
-                                    ext_conf.status_upload_blob_type)
-                    HostPluginProtocol.set_default_channel(True)
+                    try:
+                        if self.status_blob.upload(blob_uri):
+                            from azurelinuxagent.common.event import add_event, WALAEventOperation
+                            add_event(
+                                name=AGENT_NAME,
+                                version=CURRENT_VERSION,
+                                op=WALAEventOperation.ReportStatus,
+                                is_success=True,
+                                message="direct",
+                                log_event=False)
+                            return
+                    except HttpError:
+                        pass
+
                     return
-
             except Exception as e:
-                # If the HostPlugin rejects the request,
-                # let the error continue, but set to use the HostPlugin
                 if isinstance(e, ResourceGoneError):
-                    HostPluginProtocol.set_default_channel(True)
                     continue
 
                 self.report_status_event(
@@ -1111,8 +1157,7 @@ class WireClient(object):
 
                         host = self.get_host_plugin()
                         uri, headers = host.get_artifact_request(blob)
-                        config = self.fetch(uri, headers, use_proxy=False)
-                        profile = self.decode_config(config)
+                        profile = self.fetch(uri, headers, use_proxy=False)
 
                     if not textutil.is_str_none_or_whitespace(profile):
                         logger.verbose("Artifacts profile downloaded")
@@ -1414,6 +1459,12 @@ class ExtensionsConfig(object):
         ext_handler.properties.upgradeGuid = getattrib(plugin, "upgradeGuid")
         if not ext_handler.properties.upgradeGuid:
             ext_handler.properties.upgradeGuid = None
+
+        try:
+            ext_handler.properties.dependencyLevel = int(getattrib(plugin, "dependencyLevel"))
+        except ValueError:
+            ext_handler.properties.dependencyLevel = 0
+
         auto_upgrade = getattrib(plugin, "autoUpgrade")
         if auto_upgrade is not None and auto_upgrade.lower() == "true":
             ext_handler.properties.upgradePolicy = "auto"
