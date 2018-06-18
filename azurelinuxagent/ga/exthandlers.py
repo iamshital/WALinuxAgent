@@ -22,7 +22,6 @@ import glob
 import json
 import operator
 import os
-import os.path
 import random
 import re
 import shutil
@@ -36,8 +35,9 @@ import azurelinuxagent.common.conf as conf
 import azurelinuxagent.common.logger as logger
 import azurelinuxagent.common.utils.fileutil as fileutil
 import azurelinuxagent.common.version as version
-from azurelinuxagent.common.errorstate import ErrorState, ERROR_STATE_DELTA_DEFAULT, ERROR_STATE_DELTA_INSTALL
 
+from azurelinuxagent.common.cgroups import CGroups, CGroupsTelemetry
+from azurelinuxagent.common.errorstate import ErrorState, ERROR_STATE_DELTA_DEFAULT, ERROR_STATE_DELTA_INSTALL
 from azurelinuxagent.common.event import add_event, WALAEventOperation, elapsed_milliseconds, report_event
 from azurelinuxagent.common.exception import ExtensionError, ProtocolError
 from azurelinuxagent.common.future import ustr
@@ -235,10 +235,6 @@ class ExtHandlersHandler(object):
                       is_success=False,
                       message=msg)
             return
-
-    def run_status(self):
-        self.report_ext_handlers_status()
-        return
 
     def get_upgrade_guid(self, name):
         return self.last_upgrade_guids.get(name, (None, False))[0]
@@ -721,10 +717,10 @@ class ExtHandlerInstance(object):
     def set_operation(self, op):
         self.operation = op
 
-    def report_event(self, message="", is_success=True, duration=0):
+    def report_event(self, message="", is_success=True, duration=0, log_event=True):
         ext_handler_version = self.ext_handler.properties.version
         add_event(name=self.ext_handler.name, version=ext_handler_version, message=message,
-                  op=self.operation, is_success=is_success, duration=duration)
+                  op=self.operation, is_success=is_success, duration=duration, log_event=log_event)
 
     def download(self):
         begin_utc = datetime.datetime.utcnow()
@@ -990,17 +986,29 @@ class ExtHandlerInstance(object):
             # of Python versions we must support we must use .communicate().
             # Some extensions erroneously begin cmd with a slash; don't interpret those
             # as root-relative. (Issue #1170)
-            full_path = os.path.join(base_dir, cmd.lstrip(os.sep))
+            full_path = os.path.join(base_dir, cmd.lstrip(os.path.sep))
+
+            def pre_exec_function():
+                """
+                Change process state before the actual target process is started. Effectively, this runs between
+                the fork() and the exec() of sub-process creation.
+                :return:
+                """
+                os.setsid()
+                CGroups.add_to_extension_cgroup(self.ext_handler.name)
+
             process = subprocess.Popen(full_path,
                                   shell=True,
                                   cwd=base_dir,
                                   stdout=subprocess.PIPE,
                                   stderr=subprocess.PIPE,
                                   env=os.environ,
-                                  preexec_fn=os.setsid)
+                                  preexec_fn=pre_exec_function)
         except OSError as e:
             raise ExtensionError("Failed to launch '{0}': {1}".format(full_path, e.strerror))
 
+        cg = CGroups.for_extension(self.ext_handler.name)
+        CGroupsTelemetry.track_extension(self.ext_handler.name, cg)
         msg = capture_from_process(process, cmd, timeout)
 
         ret = process.poll()
@@ -1008,7 +1016,7 @@ class ExtHandlerInstance(object):
             raise ExtensionError("Non-zero exit code: {0}, {1}\n{2}".format(ret, cmd, msg))
 
         duration = elapsed_milliseconds(begin_utc)
-        self.report_event(message="{0}\n{1}".format(cmd, msg), duration=duration)
+        self.report_event(message="{0}\n{1}".format(cmd, msg), duration=duration, log_event=False)
 
     def load_manifest(self):
         man_file = self.get_manifest_file()
@@ -1115,9 +1123,8 @@ class ExtHandlerInstance(object):
                     self.ext_handler.name,
                     self.ext_handler.properties.version))
         except (IOError, ValueError, ProtocolError) as e:
-            fileutil.clean_ioerror(e,
-                paths=[status_file])
-            self.logger.error("Failed to save handler status: {0}", traceback.format_exc())
+            fileutil.clean_ioerror(e, paths=[status_file])
+            self.logger.error("Failed to save handler status: {0}, {1}", ustr(e), traceback.format_exc())
         
     def get_handler_status(self):
         state_dir = self.get_conf_dir()

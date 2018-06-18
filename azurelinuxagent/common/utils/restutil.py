@@ -52,7 +52,6 @@ RETRY_CODES = [
 ]
 
 RESOURCE_GONE_CODES = [
-    httpclient.BAD_REQUEST,
     httpclient.GONE
 ]
 
@@ -60,6 +59,10 @@ OK_CODES = [
     httpclient.OK,
     httpclient.CREATED,
     httpclient.ACCEPTED
+]
+
+HOSTPLUGIN_UPSTREAM_FAILURE_CODES = [
+    502
 ]
 
 THROTTLE_CODES = [
@@ -78,8 +81,9 @@ RETRY_EXCEPTIONS = [
 HTTP_PROXY_ENV = "http_proxy"
 HTTPS_PROXY_ENV = "https_proxy"
 HTTP_USER_AGENT = "{0}/{1}".format(AGENT_NAME, GOAL_STATE_AGENT_VERSION)
+HTTP_USER_AGENT_HEALTH = "{0}+health".format(HTTP_USER_AGENT)
 
-DEFAULT_PROTOCOL_ENDPOINT='168.63.129.16'
+DEFAULT_PROTOCOL_ENDPOINT = '168.63.129.16'
 HOST_PLUGIN_PORT = 32526
 
 
@@ -385,11 +389,21 @@ def http_delete(url, headers=None, use_proxy=False,
                         retry_codes=retry_codes,
                         retry_delay=retry_delay)
 
+
 def request_failed(resp, ok_codes=OK_CODES):
     return not request_succeeded(resp, ok_codes=ok_codes)
 
+
 def request_succeeded(resp, ok_codes=OK_CODES):
     return resp is not None and resp.status in ok_codes
+
+
+def request_failed_at_hostplugin(resp, upstream_failure_codes=HOSTPLUGIN_UPSTREAM_FAILURE_CODES):
+    """
+    Host plugin will return 502 for any upstream issue, so a failure is any 5xx except 502
+    """
+    return resp is not None and resp.status >= 500 and resp.status not in upstream_failure_codes
+
 
 def read_response_error(resp):
     result = ''

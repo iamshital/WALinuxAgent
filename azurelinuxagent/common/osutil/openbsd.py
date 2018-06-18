@@ -36,8 +36,10 @@ UUID_PATTERN = re.compile(
     re.IGNORECASE)
 
 class OpenBSDOSUtil(DefaultOSUtil):
+
     def __init__(self):
         super(OpenBSDOSUtil, self).__init__()
+        self.jit_enabled = True
         self._scsi_disks_timeout_set = False
 
     def get_instance_id(self):
@@ -345,3 +347,7 @@ class OpenBSDOSUtil(DefaultOSUtil):
         Return device name attached to ide port 'n'.
         """
         return "wd{0}".format(port_id)
+
+    @staticmethod
+    def get_total_cpu_ticks_since_boot():
+        return 0

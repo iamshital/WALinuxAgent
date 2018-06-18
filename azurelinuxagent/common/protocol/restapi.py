@@ -303,6 +303,16 @@ class TelemetryEventList(DataContract):
     def __init__(self):
         self.events = DataContractList(TelemetryEvent)
 
+class RemoteAccessUser(DataContract):
+    def __init__(self, name, encrypted_password, expiration):
+        self.name = name
+        self.encrypted_password = encrypted_password
+        self.expiration = expiration
+
+class RemoteAccessUsersList(DataContract):
+    def __init__(self):
+        self.users = DataContractList(RemoteAccessUser)
+
 
 class Protocol(DataContract):
     def detect(self):
@@ -333,12 +343,14 @@ class Protocol(DataContract):
         raise NotImplementedError()
 
     def download_ext_handler_pkg(self, uri, headers=None, use_proxy=True):
+        pkg = None
         try:
             resp = restutil.http_get(uri, headers=headers, use_proxy=use_proxy)
             if restutil.request_succeeded(resp):
-                return resp.read()
+                pkg = resp.read()
         except Exception as e:
             logger.warn("Failed to download from: {0}".format(uri), e)
+        return pkg
 
     def report_provision_status(self, provision_status):
         raise NotImplementedError()

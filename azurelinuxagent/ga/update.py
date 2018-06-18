@@ -85,6 +85,7 @@ READONLY_FILE_GLOBS = [
     "ovf-env.xml"
 ]
 
+
 def get_update_handler():
     return UpdateHandler()
 
@@ -190,7 +191,8 @@ class UpdateHandler(object):
                     version=agent_version,
                     op=WALAEventOperation.Enable,
                     is_success=True,
-                    message=msg)
+                    message=msg,
+                    log_event=False)
 
                 if ret is None:
                     ret = self.child_process.wait()
@@ -259,6 +261,9 @@ class UpdateHandler(object):
             exthandlers_handler = get_exthandlers_handler()
             migrate_handler_state()
 
+            from azurelinuxagent.ga.remoteaccess import get_remote_access_handler
+            remote_access_handler = get_remote_access_handler()
+
             self._ensure_no_orphans()
             self._emit_restart_event()
             self._ensure_partition_assigned()
@@ -295,6 +300,8 @@ class UpdateHandler(object):
 
                 last_etag = exthandlers_handler.last_etag
                 exthandlers_handler.run()
+
+                remote_access_handler.run()
 
                 if last_etag != exthandlers_handler.last_etag:
                     self._ensure_readonly_files()
@@ -540,7 +547,7 @@ class UpdateHandler(object):
 
         known_versions = [agent.version for agent in self.agents]
         if CURRENT_VERSION not in known_versions:
-            logger.info(
+            logger.verbose(
                 u"Running Agent {0} was not found in the agent manifest - adding to list",
                 CURRENT_VERSION)
             known_versions.append(CURRENT_VERSION)
@@ -874,6 +881,8 @@ class GuestAgent(object):
     def _fetch(self, uri, headers=None, use_proxy=True):
         package = None
         try:
+            is_healthy = True
+            error_response = ''
             resp = restutil.http_get(uri, use_proxy=use_proxy, headers=headers)
             if restutil.request_succeeded(resp):
                 package = resp.read()
@@ -882,8 +891,13 @@ class GuestAgent(object):
                                     asbin=True)
                 logger.verbose(u"Agent {0} downloaded from {1}", self.name, uri)
             else:
-                logger.verbose("Fetch was unsuccessful [{0}]",
-                               restutil.read_response_error(resp))
+                error_response = restutil.read_response_error(resp)
+                logger.verbose("Fetch was unsuccessful [{0}]", error_response)
+                is_healthy = not restutil.request_failed_at_hostplugin(resp)
+
+            if self.host is not None:
+                self.host.report_fetch_health(uri, is_healthy, source='GuestAgent', response=error_response)
+
         except restutil.HttpError as http_error:
             if isinstance(http_error, ResourceGoneError):
                 raise
