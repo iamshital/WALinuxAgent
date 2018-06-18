@@ -1,6 +1,6 @@
 # Microsoft Azure Linux Agent
 #
-# Copyright 2014 Microsoft Corporation
+# Copyright 2018 Microsoft Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,17 +14,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Requires Python 2.4+ and Openssl 1.0+
+# Requires Python 2.6+ and Openssl 1.0+
 #
 
 import base64
 import struct
+import sys
+import os.path
+import subprocess
 
 from azurelinuxagent.common.future import ustr, bytebuffer
 from azurelinuxagent.common.exception import CryptError
 
 import azurelinuxagent.common.logger as logger
 import azurelinuxagent.common.utils.shellutil as shellutil
+import azurelinuxagent.common.utils.textutil as textutil
+
+DECRYPT_SECRET_CMD = "{0} cms -decrypt -inform DER -inkey {1} -in /dev/stdin"
 
 class CryptUtil(object):
     def __init__(self, openssl_cmd):
@@ -43,25 +49,40 @@ class CryptUtil(object):
                 prv_file, crt_file))
 
     def get_pubkey_from_prv(self, file_name):
+        if not os.path.exists(file_name):
+            raise IOError("File not found: {0}", file_name)
+
         cmd = "{0} rsa -in {1} -pubout 2>/dev/null".format(self.openssl_cmd, 
                                                            file_name)
         pub = shellutil.run_get_output(cmd)[1]
         return pub
 
     def get_pubkey_from_crt(self, file_name):
+        if not os.path.exists(file_name):
+            raise IOError("File not found: {0}", file_name)
+
         cmd = "{0} x509 -in {1} -pubkey -noout".format(self.openssl_cmd, 
                                                        file_name)
         pub = shellutil.run_get_output(cmd)[1]
         return pub
 
     def get_thumbprint_from_crt(self, file_name):
-        cmd="{0} x509 -in {1} -fingerprint -noout".format(self.openssl_cmd, 
-                                                          file_name)
+        if not os.path.exists(file_name):
+            raise IOError("File not found: {0}", file_name)
+
+        cmd = "{0} x509 -in {1} -fingerprint -noout".format(self.openssl_cmd,
+                                                            file_name)
         thumbprint = shellutil.run_get_output(cmd)[1]
         thumbprint = thumbprint.rstrip().split('=')[1].replace(':', '').upper()
         return thumbprint
 
     def decrypt_p7m(self, p7m_file, trans_prv_file, trans_cert_file, pem_file):
+        if not os.path.exists(p7m_file):
+            raise IOError("File not found: {0}", p7m_file)
+
+        if not os.path.exists(trans_prv_file):
+            raise IOError("File not found: {0}", trans_prv_file)
+
         cmd = ("{0} cms -decrypt -in {1} -inkey {2} -recip {3} "
                "| {4} pkcs12 -nodes -password pass: -out {5}"
                "").format(self.openssl_cmd, p7m_file, trans_prv_file, 
@@ -128,3 +149,16 @@ class CryptUtil(object):
                 index = 7
         return bytes(byte_array)
 
+    def decrypt_secret(self, encrypted_password, private_key):
+        try:
+            decoded = base64.b64decode(encrypted_password)
+        except Exception as e:
+            raise CryptError("Error decoding secret", e)
+        args = DECRYPT_SECRET_CMD.format(self.openssl_cmd, private_key).split(' ')
+        p = subprocess.Popen(args, stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.STDOUT)
+        p.stdin.write(decoded)
+        output = p.communicate()[0]
+        retcode = p.poll()
+        if retcode:
+            raise subprocess.CalledProcessError(retcode, "openssl cms -decrypt", output=output)
+        return output.decode('utf-16')

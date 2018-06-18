@@ -1,4 +1,4 @@
-# Copyright 2014 Microsoft Corporation
+# Copyright 2018 Microsoft Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Requires Python 2.4+ and Openssl 1.0+
+# Requires Python 2.6+ and Openssl 1.0+
 #
 
 import atexit
@@ -33,6 +33,7 @@ from azurelinuxagent.common.future import ustr
 from azurelinuxagent.common.protocol.restapi import TelemetryEventParam, \
     TelemetryEvent, \
     get_properties
+from azurelinuxagent.common.utils import textutil
 from azurelinuxagent.common.version import CURRENT_VERSION
 
 _EVENT_MSG = "Event: name={0}, op={1}, message={2}, duration={3}"
@@ -46,22 +47,29 @@ class WALAEventOperation:
     CustomData = "CustomData"
     Deploy = "Deploy"
     Disable = "Disable"
+    Downgrade = "Downgrade"
     Download = "Download"
     Enable = "Enable"
     ExtensionProcessing = "ExtensionProcessing"
     Firewall = "Firewall"
+    GetArtifactExtended = "GetArtifactExtended"
     HealthCheck = "HealthCheck"
     HeartBeat = "HeartBeat"
     HostPlugin = "HostPlugin"
+    HostPluginHeartbeat = "HostPluginHeartbeat"
     HttpErrors = "HttpErrors"
+    ImdsHeartbeat = "ImdsHeartbeat"
     Install = "Install"
+    InitializeCGroups = "InitializeCGroups"
     InitializeHostPlugin = "InitializeHostPlugin"
     Log = "Log"
     Partition = "Partition"
     ProcessGoalState = "ProcessGoalState"
     Provision = "Provision"
-    GuestState = "GuestState"
+    ProvisionGuestAgent = "ProvisionGuestAgent"
+    RemoteAccessHandling = "RemoteAccessHandling"
     ReportStatus = "ReportStatus"
+    ReportStatusExtended = "ReportStatusExtended"
     Restart = "Restart"
     SkipUpdate = "SkipUpdate"
     UnhandledError = "UnhandledError"
@@ -70,6 +78,14 @@ class WALAEventOperation:
     Upgrade = "Upgrade"
     Update = "Update"
 
+
+SHOULD_ENCODE_MESSAGE_LEN = 80
+SHOULD_ENCODE_MESSAGE_OP = [
+    WALAEventOperation.Disable,
+    WALAEventOperation.Enable,
+    WALAEventOperation.Install,
+    WALAEventOperation.UnInstall,
+]
 
 class EventStatus(object):
     EVENT_STATUS_FILE = "event_status.json"
@@ -128,9 +144,45 @@ __event_status_operations__ = [
     ]
 
 
+def _encode_message(op, message):
+    """
+    Gzip and base64 encode a message based on the operation.
+
+    The intent of this message is to make the logs human readable and include the
+    stdout/stderr from extension operations.  Extension operations tend to generate
+    a lot of noise, which makes it difficult to parse the line-oriented waagent.log.
+    The compromise is to encode the stdout/stderr so we preserve the data and do
+    not destroy the line oriented nature.
+
+    The data can be recovered using the following command:
+
+      $ echo '<encoded data>' | base64 -d | pigz -zd
+
+    You may need to install the pigz command.
+
+    :param op: Operation, e.g. Enable or Install
+    :param message: Message to encode
+    :return: gzip'ed and base64 encoded message, or the original message
+    """
+
+    if len(message) == 0:
+        return message
+
+    if op not in SHOULD_ENCODE_MESSAGE_OP:
+        return message
+
+    try:
+        return textutil.compress(message)
+    except Exception:
+        # If the message could not be encoded a dummy message ('<>') is returned.
+        # The original message was still sent via telemetry, so all is not lost.
+        return "<>"
+
+
 def _log_event(name, op, message, duration, is_success=True):
     global _EVENT_MSG
 
+    message = _encode_message(op, message)
     if not is_success:
         logger.error(_EVENT_MSG, name, op, message, duration)
     else:
@@ -206,7 +258,11 @@ class EventLogger(object):
         if not is_success or log_event:
             _log_event(name, op, message, duration, is_success=is_success)
 
-        event = TelemetryEvent(1, "69B669B9-4AF8-4C50-BDC4-6006FA76E975")
+        self._add_event(duration, evt_type, is_internal, is_success, message, name, op, version, eventId=1)
+        self._add_event(duration, evt_type, is_internal, is_success, message, name, op, version, eventId=6)
+
+    def _add_event(self, duration, evt_type, is_internal, is_success, message, name, op, version, eventId):
+        event = TelemetryEvent(eventId, "69B669B9-4AF8-4C50-BDC4-6006FA76E975")
         event.parameters.append(TelemetryEventParam('Name', name))
         event.parameters.append(TelemetryEventParam('Version', str(version)))
         event.parameters.append(TelemetryEventParam('IsInternal', is_internal))
@@ -249,12 +305,43 @@ class EventLogger(object):
         except EventError:
             pass
 
+    def add_metric(self, category, counter, instance, value, log_event=False):
+        """
+        Create and save an event which contains a telemetry event.
+
+        :param str category: The category of metric (e.g. "cpu", "memory")
+        :param str counter: The specific metric within the category (e.g. "%idle")
+        :param str instance: For instanced metrics, the instance identifier (filesystem name, cpu core#, etc.)
+        :param value: Value of the metric
+        :param bool log_event: If true, log the collected metric in the agent log
+        """
+        if log_event:
+            from azurelinuxagent.common.version import AGENT_NAME
+            message = "Metric {0}/{1} [{2}] = {3}".format(category, counter, instance, value)
+            _log_event(AGENT_NAME, "METRIC", message, 0)
+
+        event = TelemetryEvent(4, "69B669B9-4AF8-4C50-BDC4-6006FA76E975")
+        event.parameters.append(TelemetryEventParam('Category', category))
+        event.parameters.append(TelemetryEventParam('Counter', counter))
+        event.parameters.append(TelemetryEventParam('Instance', instance))
+        event.parameters.append(TelemetryEventParam('Value', value))
+
+        data = get_properties(event)
+        try:
+            self.save_event(json.dumps(data))
+        except EventError as e:
+            logger.error("{0}", e)
+
 
 __event_logger__ = EventLogger()
 
 
 def elapsed_milliseconds(utc_start):
-    d = datetime.utcnow() - utc_start
+    now = datetime.utcnow()
+    if now < utc_start:
+        return 0
+
+    d = now - utc_start
     return int(((d.days * 24 * 60 * 60 + d.seconds) * 1000) + \
                     (d.microseconds / 1000.0))
 
@@ -275,6 +362,25 @@ def report_periodic(delta, op, is_success=True, message=''):
               is_success=is_success,
               message=message,
               op=op)
+
+
+def report_metric(category, counter, instance, value, log_event=False, reporter=__event_logger__):
+    """
+    Send a telemetry event reporting a single instance of a performance counter.
+    :param str category: The category of the metric (cpu, memory, etc)
+    :param str counter: The name of the metric ("%idle", etc)
+    :param str instance: For instanced metrics, the identifier of the instance. E.g. a disk drive name, a cpu core#
+    :param     value: The value of the metric
+    :param bool log_event: If True, log the metric in the agent log as well
+    :param EventLogger reporter: The EventLogger instance to which metric events should be sent
+    """
+    if reporter.event_dir is None:
+        from azurelinuxagent.common.version import AGENT_NAME
+        logger.warn("Cannot report metric event -- Event reporter is not initialized.")
+        message = "Metric {0}/{1} [{2}] = {3}".format(category, counter, instance, value)
+        _log_event(AGENT_NAME, "METRIC", message, 0)
+        return
+    reporter.add_metric(category, counter, instance, value, log_event)
 
 
 def add_event(name, op=WALAEventOperation.Unknown, is_success=True, duration=0,

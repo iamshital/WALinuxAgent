@@ -1,4 +1,4 @@
-# Copyright 2014 Microsoft Corporation
+# Copyright 2018 Microsoft Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,16 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Requires Python 2.4+ and Openssl 1.0+
+# Requires Python 2.6+ and Openssl 1.0+
 #
 
+from distutils.version import LooseVersion as Version
 from tests.tools import *
-import uuid
-import unittest
-import os
-from azurelinuxagent.common.future import ustr
+
 import azurelinuxagent.common.utils.textutil as textutil
-from azurelinuxagent.common.utils.textutil import Version
+
+from azurelinuxagent.common.future import ustr
 
 
 class TestTextUtil(AgentTestCase):
@@ -138,6 +137,11 @@ class TestTextUtil(AgentTestCase):
 
         for t in data:
             self.assertEqual(t[2], textutil.swap_hexstring(t[0], width=t[1]))
-        
+
+    def test_compress(self):
+        result = textutil.compress('[stdout]\nHello World\n\n[stderr]\n\n')
+        self.assertEqual('eJyLLi5JyS8tieXySM3JyVcIzy/KSeHiigaKphYVxXJxAQDAYQr2', result)
+
+
 if __name__ == '__main__':
     unittest.main()

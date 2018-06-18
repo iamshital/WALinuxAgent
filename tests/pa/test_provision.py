@@ -1,4 +1,4 @@
-# Copyright 2014 Microsoft Corporation
+# Copyright 2018 Microsoft Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,15 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Requires Python 2.4+ and Openssl 1.0+
+# Requires Python 2.6+ and Openssl 1.0+
 #
 
-import json
-import socket
-
-import azurelinuxagent.common.utils.fileutil as fileutil
-
-from azurelinuxagent.common.event import WALAEventOperation
 from azurelinuxagent.common.exception import ProvisionError
 from azurelinuxagent.common.osutil.default import DefaultOSUtil
 from azurelinuxagent.common.protocol import OVF_FILE_NAME
@@ -71,9 +65,9 @@ class TestProvision(AgentTestCase):
 
         ph.run()
 
-        ph.is_provisioned.assert_not_called()
-        ph.report_ready.assert_called_once()
-        ph.write_provisioned.assert_called_once()
+        self.assertEqual(0, ph.is_provisioned.call_count)
+        self.assertEqual(1, ph.report_ready.call_count)
+        self.assertEqual(1, ph.write_provisioned.call_count)
 
     @patch('os.path.isfile', return_value=False)
     def test_is_provisioned_not_provisioned(self, mock_isfile):
@@ -96,8 +90,8 @@ class TestProvision(AgentTestCase):
         mock_deprovision.return_value = deprovision_handler
 
         self.assertTrue(ph.is_provisioned())
-        ph.osutil.is_current_instance_id.assert_called_once()
-        deprovision_handler.run_changed_unique_id.assert_not_called()
+        self.assertEqual(1, ph.osutil.is_current_instance_id.call_count)
+        self.assertEqual(0, deprovision_handler.run_changed_unique_id.call_count)
 
     @patch('os.path.isfile', return_value=True)
     @patch('azurelinuxagent.common.utils.fileutil.read_file',
@@ -116,8 +110,8 @@ class TestProvision(AgentTestCase):
         mock_deprovision.return_value = deprovision_handler
 
         self.assertTrue(ph.is_provisioned())
-        ph.osutil.is_current_instance_id.assert_called_once()
-        deprovision_handler.run_changed_unique_id.assert_called_once()
+        self.assertEqual(1, ph.osutil.is_current_instance_id.call_count)
+        self.assertEqual(1, deprovision_handler.run_changed_unique_id.call_count)
 
     @distros()
     @patch('azurelinuxagent.common.osutil.default.DefaultOSUtil.get_instance_id',
@@ -151,15 +145,17 @@ class TestProvision(AgentTestCase):
 
         ph.run()
 
-        call1 = call("Provisioning succeeded", duration=ANY, is_success=True)
-        call2 = call(ANY, is_success=True, operation=WALAEventOperation.GuestState)
-        ph.report_event.assert_has_calls([call1, call2])
+        self.assertEqual(2, ph.report_event.call_count)
+        positional_args, kw_args = ph.report_event.call_args_list[0]
+        # [call('Provisioning succeeded (146473.68s)', duration=65, is_success=True)]
+        self.assertTrue(re.match(r'Provisioning succeeded \(\d+\.\d+s\)', positional_args[0]) is not None)
+        self.assertTrue(isinstance(kw_args['duration'], int))
+        self.assertTrue(kw_args['is_success'])
 
-        args, kwargs = ph.report_event.call_args_list[1]
-        guest_state_json = json.loads(args[0])
-        self.assertTrue(1 <= guest_state_json['cpu'])
-        self.assertTrue(1 <= guest_state_json['mem'])
-        self.assertEqual(socket.gethostname(), guest_state_json['hostname'])
+        positional_args, kw_args = ph.report_event.call_args_list[1]
+        self.assertTrue(kw_args['operation'] == 'ProvisionGuestAgent')
+        self.assertTrue(kw_args['message'] == 'false')
+        self.assertTrue(kw_args['is_success'])
 
     @distros()
     @patch(
@@ -196,7 +192,6 @@ class TestProvision(AgentTestCase):
         ph.run()
         ph.report_event.assert_called_once_with(
             "[ProvisionError] --unit-test--")
-
 
 if __name__ == '__main__':
     unittest.main()

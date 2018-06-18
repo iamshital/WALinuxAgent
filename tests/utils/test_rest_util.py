@@ -1,4 +1,4 @@
-# Copyright 2014 Microsoft Corporation
+# Copyright 2018 Microsoft Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,16 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Requires Python 2.4+ and Openssl 1.0+
+# Requires Python 2.6+ and Openssl 1.0+
 #
 
-import os
-import unittest
-
 from azurelinuxagent.common.exception import HttpError, \
-                                            ProtocolError, \
                                             ResourceGoneError
+
 import azurelinuxagent.common.utils.restutil as restutil
+from azurelinuxagent.common.utils.restutil import HTTP_USER_AGENT
 
 from azurelinuxagent.common.future import httpclient, ustr
 
@@ -134,8 +132,8 @@ class TestHttpOperations(AgentTestCase):
         h, p = restutil._get_http_proxy()
         self.assertEqual("host", h)
         self.assertEqual(None, p)
-        mock_host.assert_called_once()
-        mock_port.assert_called_once()
+        self.assertEqual(1, mock_host.call_count)
+        self.assertEqual(1, mock_port.call_count)
 
     @patch('azurelinuxagent.common.conf.get_httpproxy_port')
     @patch('azurelinuxagent.common.conf.get_httpproxy_host')
@@ -145,8 +143,8 @@ class TestHttpOperations(AgentTestCase):
         h, p = restutil._get_http_proxy()
         self.assertEqual(None, h)
         self.assertEqual(None, p)
-        mock_host.assert_called_once()
-        mock_port.assert_not_called()
+        self.assertEqual(1, mock_host.call_count)
+        self.assertEqual(0, mock_port.call_count)
 
     @patch('azurelinuxagent.common.conf.get_httpproxy_host')
     def test_get_http_proxy_http_uses_httpproxy(self, mock_host):
@@ -197,9 +195,9 @@ class TestHttpOperations(AgentTestCase):
         ])
         HTTPSConnection.assert_not_called()
         mock_conn.request.assert_has_calls([
-            call(method="GET", url="/bar", body=None, headers={})
+            call(method="GET", url="/bar", body=None, headers={'User-Agent': HTTP_USER_AGENT, 'Connection': 'close'})
         ])
-        mock_conn.getresponse.assert_called_once()
+        self.assertEqual(1, mock_conn.getresponse.call_count)
         self.assertNotEquals(None, resp)
         self.assertEquals("TheResults", resp.read())
 
@@ -220,9 +218,9 @@ class TestHttpOperations(AgentTestCase):
             call("foo", 443, timeout=10)
         ])
         mock_conn.request.assert_has_calls([
-            call(method="GET", url="/bar", body=None, headers={})
+            call(method="GET", url="/bar", body=None, headers={'User-Agent': HTTP_USER_AGENT, 'Connection': 'close'})
         ])
-        mock_conn.getresponse.assert_called_once()
+        self.assertEqual(1, mock_conn.getresponse.call_count)
         self.assertNotEquals(None, resp)
         self.assertEquals("TheResults", resp.read())
 
@@ -244,9 +242,9 @@ class TestHttpOperations(AgentTestCase):
         ])
         HTTPSConnection.assert_not_called()
         mock_conn.request.assert_has_calls([
-            call(method="GET", url="http://foo:80/bar", body=None, headers={})
+            call(method="GET", url="http://foo:80/bar", body=None, headers={'User-Agent': HTTP_USER_AGENT, 'Connection': 'close'})
         ])
-        mock_conn.getresponse.assert_called_once()
+        self.assertEqual(1, mock_conn.getresponse.call_count)
         self.assertNotEquals(None, resp)
         self.assertEquals("TheResults", resp.read())
 
@@ -269,9 +267,9 @@ class TestHttpOperations(AgentTestCase):
             call("foo.bar", 23333, timeout=10)
         ])
         mock_conn.request.assert_has_calls([
-            call(method="GET", url="https://foo:443/bar", body=None, headers={})
+            call(method="GET", url="https://foo:443/bar", body=None, headers={'User-Agent': HTTP_USER_AGENT, 'Connection': 'close'})
         ])
-        mock_conn.getresponse.assert_called_once()
+        self.assertEqual(1, mock_conn.getresponse.call_count)
         self.assertNotEquals(None, resp)
         self.assertEquals("TheResults", resp.read())
 
@@ -388,16 +386,6 @@ class TestHttpOperations(AgentTestCase):
         self.assertEqual(
             [call(1) for i in range(restutil.THROTTLE_RETRIES-1)],
             _sleep.call_args_list)
-
-    @patch("time.sleep")
-    @patch("azurelinuxagent.common.utils.restutil._http_request")
-    def test_http_request_raises_for_bad_request(self, _http_request, _sleep):
-        _http_request.side_effect = [
-            Mock(status=httpclient.BAD_REQUEST)
-        ]
-
-        self.assertRaises(ResourceGoneError, restutil.http_get, "https://foo.bar")
-        self.assertEqual(1, _http_request.call_count)
 
     @patch("time.sleep")
     @patch("azurelinuxagent.common.utils.restutil._http_request")

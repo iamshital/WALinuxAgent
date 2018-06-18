@@ -1,5 +1,5 @@
 #
-# Copyright 2014 Microsoft Corporation
+# Copyright 2018 Microsoft Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Requires Python 2.4+ and Openssl 1.0+
+# Requires Python 2.6+ and Openssl 1.0+
 #
 
 import os
@@ -21,11 +21,13 @@ import azurelinuxagent.common.utils.shellutil as shellutil
 from azurelinuxagent.common.osutil.default import DefaultOSUtil
 
 class CoreOSUtil(DefaultOSUtil):
+
     def __init__(self):
         super(CoreOSUtil, self).__init__()
         self.agent_conf_file_path = '/usr/share/oem/waagent.conf'
         self.waagent_path = '/usr/share/oem/bin/waagent'
         self.python_path = '/usr/share/oem/python/bin'
+        self.jit_enabled = True
         if 'PATH' in os.environ:
             path = "{0}:{1}".format(os.environ['PATH'], self.python_path)
         else:
