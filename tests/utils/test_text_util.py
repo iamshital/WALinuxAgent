@@ -18,6 +18,8 @@
 from distutils.version import LooseVersion as Version
 from tests.tools import *
 
+import hashlib
+
 import azurelinuxagent.common.utils.textutil as textutil
 
 from azurelinuxagent.common.future import ustr
@@ -42,7 +44,7 @@ class TestTextUtil(AgentTestCase):
 
         data = "abcd\xa0e\xf0fghijk\xbblm"
         self.assertEqual("abcdXeXfghijkXlm",
-            textutil.replace_non_ascii(data, replace_char='X'))
+                         textutil.replace_non_ascii(data, replace_char='X'))
 
         self.assertEqual('', textutil.replace_non_ascii(None))
 
@@ -141,6 +143,56 @@ class TestTextUtil(AgentTestCase):
     def test_compress(self):
         result = textutil.compress('[stdout]\nHello World\n\n[stderr]\n\n')
         self.assertEqual('eJyLLi5JyS8tieXySM3JyVcIzy/KSeHiigaKphYVxXJxAQDAYQr2', result)
+
+    def test_hash_empty_list(self):
+        result = textutil.hash_strings([])
+        self.assertEqual(b'\xda9\xa3\xee^kK\r2U\xbf\xef\x95`\x18\x90\xaf\xd8\x07\t', result)
+
+    def test_hash_list(self):
+        test_list = ["abc", "123"]
+        result_from_list = textutil.hash_strings(test_list)
+
+        test_string = "".join(test_list)
+        hash_from_string = hashlib.sha1()
+        hash_from_string.update(test_string.encode())
+
+        self.assertEqual(result_from_list, hash_from_string.digest())
+        self.assertEqual(hash_from_string.hexdigest(), '6367c48dd193d56ea7b0baad25b19455e529f5ee')
+
+    def test_empty_strings(self):
+        self.assertTrue(textutil.is_str_none_or_whitespace(None))
+        self.assertTrue(textutil.is_str_none_or_whitespace(' '))
+        self.assertTrue(textutil.is_str_none_or_whitespace('\t'))
+        self.assertTrue(textutil.is_str_none_or_whitespace('\n'))
+        self.assertTrue(textutil.is_str_none_or_whitespace(' \t'))
+        self.assertTrue(textutil.is_str_none_or_whitespace(' \r\n'))
+
+        self.assertTrue(textutil.is_str_empty(None))
+        self.assertTrue(textutil.is_str_empty(' '))
+        self.assertTrue(textutil.is_str_empty('\t'))
+        self.assertTrue(textutil.is_str_empty('\n'))
+        self.assertTrue(textutil.is_str_empty(' \t'))
+        self.assertTrue(textutil.is_str_empty(' \r\n'))
+
+        self.assertFalse(textutil.is_str_none_or_whitespace(u' \x01 '))
+        self.assertFalse(textutil.is_str_none_or_whitespace(u'foo'))
+        self.assertFalse(textutil.is_str_none_or_whitespace('bar'))
+
+        self.assertFalse(textutil.is_str_empty(u' \x01 '))
+        self.assertFalse(textutil.is_str_empty(u'foo'))
+        self.assertFalse(textutil.is_str_empty('bar'))
+
+        hex_null_1 = u'\x00'
+        hex_null_2 = u' \x00 '
+
+        self.assertFalse(textutil.is_str_none_or_whitespace(hex_null_1))
+        self.assertFalse(textutil.is_str_none_or_whitespace(hex_null_2))
+
+        self.assertTrue(textutil.is_str_empty(hex_null_1))
+        self.assertTrue(textutil.is_str_empty(hex_null_2))
+
+        self.assertNotEqual(textutil.is_str_none_or_whitespace(hex_null_1), textutil.is_str_empty(hex_null_1))
+        self.assertNotEqual(textutil.is_str_none_or_whitespace(hex_null_2), textutil.is_str_empty(hex_null_2))
 
 
 if __name__ == '__main__':

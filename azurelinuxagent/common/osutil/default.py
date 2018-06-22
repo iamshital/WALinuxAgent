@@ -22,6 +22,7 @@ import datetime
 import errno
 import fcntl
 import glob
+import hashlib
 import multiprocessing
 import os
 import platform
@@ -36,6 +37,7 @@ import time
 import azurelinuxagent.common.logger as logger
 import azurelinuxagent.common.conf as conf
 import azurelinuxagent.common.utils.fileutil as fileutil
+import azurelinuxagent.common.utils.networkutil as networkutil
 import azurelinuxagent.common.utils.shellutil as shellutil
 import azurelinuxagent.common.utils.textutil as textutil
 
@@ -761,6 +763,75 @@ class DefaultOSUtil(object):
 
         return '', ''
 
+    @staticmethod
+    def _build_route_list(proc_net_route):
+        """
+        Construct a list of network route entries
+        :param list(str) proc_net_route: Route table lines, including headers, containing at least one route
+        :return: List of network route objects
+        :rtype: list(networkutil.RouteEntry)
+        """
+        idx = 0
+        column_index = {}
+        header_line = proc_net_route[0]
+        for header in filter(lambda h: len(h) > 0, header_line.split("\t")):
+            column_index[header.strip()] = idx
+            idx += 1
+        try:
+            idx_iface = column_index["Iface"]
+            idx_dest = column_index["Destination"]
+            idx_gw = column_index["Gateway"]
+            idx_flags = column_index["Flags"]
+            idx_metric = column_index["Metric"]
+            idx_mask = column_index["Mask"]
+        except KeyError:
+            msg = "/proc/net/route is missing key information; headers are [{0}]".format(header_line)
+            logger.periodic(logger.EVERY_HALF_DAY, msg)
+            return []
+
+        route_list = []
+        for entry in proc_net_route[1:]:
+            route = entry.split("\t")
+            if len(route) > 0:
+                route_obj = networkutil.RouteEntry(route[idx_iface], route[idx_dest], route[idx_gw], route[idx_mask],
+                                                   route[idx_flags], route[idx_metric])
+                route_list.append(route_obj)
+        return route_list
+
+    def read_route_table(self):
+        """
+        Return a list of strings comprising the route table, including column headers. Each line is stripped of leading
+        or trailing whitespace but is otherwise unmolested.
+
+        :return: Entries in the text route table
+        :rtype: list(str)
+        """
+        try:
+            with open('/proc/net/route') as routing_table:
+                return list(map(str.strip, routing_table.readlines()))
+        except OSError as e:
+            logger.periodic(logger.EVERY_HALF_DAY, "Can't read route table. {0}", e)
+
+        return []
+
+    def get_list_of_routes(self, route_table):
+        """
+        Construct a list of all network routes known to this system.
+
+        :param list(str) route_table: List of text entries from route table, including headers
+        :return: a list of network routes
+        :rtype: list(networkutil.RouteEntry)
+        """
+        route_list = []
+        count = len(route_table)
+
+        if count < 1:
+            logger.periodic(logger.EVERY_HALF_DAY, "/proc/net/route is missing headers")
+        elif count == 1:
+            logger.periodic(logger.EVERY_HALF_DAY, "/proc/net/route contains no routes")
+        else:
+            route_list = DefaultOSUtil._build_route_list(route_table)
+        return route_list
 
     def get_primary_interface(self):
         """
