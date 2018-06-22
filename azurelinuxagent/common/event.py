@@ -43,6 +43,7 @@ class WALAEventOperation:
     ActivateResourceDisk = "ActivateResourceDisk"
     AgentBlacklisted = "AgentBlacklisted"
     AgentEnabled = "AgentEnabled"
+    ArtifactsProfileBlob = "ArtifactsProfileBlob"
     AutoUpdate = "AutoUpdate"
     CustomData = "CustomData"
     Deploy = "Deploy"
@@ -255,7 +256,7 @@ class EventLogger(object):
                   is_internal=False,
                   log_event=True):
 
-        if not is_success or log_event:
+        if (not is_success) and log_event:
             _log_event(name, op, message, duration, is_success=is_success)
 
         self._add_event(duration, evt_type, is_internal, is_success, message, name, op, version, eventId=1)
@@ -346,13 +347,14 @@ def elapsed_milliseconds(utc_start):
                     (d.microseconds / 1000.0))
 
 
-def report_event(op, is_success=True, message=''):
+def report_event(op, is_success=True, message='', log_event=True):
     from azurelinuxagent.common.version import AGENT_NAME, CURRENT_VERSION
     add_event(AGENT_NAME,
               version=CURRENT_VERSION,
               is_success=is_success,
               message=message,
-              op=op)
+              op=op,
+              log_event=log_event)
 
 
 def report_periodic(delta, op, is_success=True, message=''):
