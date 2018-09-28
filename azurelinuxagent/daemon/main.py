@@ -36,7 +36,7 @@ from azurelinuxagent.common.rdma import setup_rdma_device
 from azurelinuxagent.common.version import AGENT_NAME, AGENT_LONG_NAME, \
     AGENT_VERSION, \
     DISTRO_NAME, DISTRO_VERSION, PY_VERSION_MAJOR, PY_VERSION_MINOR, \
-    PY_VERSION_MICRO
+    PY_VERSION_MICRO, DISTRO_FULL_NAME, DISTRO_VERSION
 from azurelinuxagent.daemon.resourcedisk import get_resourcedisk_handler
 from azurelinuxagent.daemon.scvmm import get_scvmm_handler
 from azurelinuxagent.ga.update import get_update_handler
